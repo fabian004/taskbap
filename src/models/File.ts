@@ -1,5 +1,5 @@
-import { Table, Column, Model, DataType, PrimaryKey, AutoIncrement, ForeignKey } from 'sequelize-typescript';
-import User from './User';
+import { Table, Column, Model, DataType, PrimaryKey, AutoIncrement, ForeignKey, BelongsTo } from 'sequelize-typescript';
+import Task from './Task';
 
 @Table({ tableName: 'Files', timestamps: false })
 export default class File extends Model {
@@ -9,7 +9,7 @@ export default class File extends Model {
   @Column(DataType.INTEGER)
   public id!: number;
 
-  @ForeignKey(() => User)
+  @ForeignKey(() => Task)
   @Column(DataType.STRING)
   public task_id!: string;
 

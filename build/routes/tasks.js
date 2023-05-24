@@ -65,7 +65,6 @@ router.get('/:id', (req, res) => __awaiter(void 0, void 0, void 0, function* () 
         return res.status(400).json({ message: "Invalid ID format" });
     }
     const task = yield Task_1.default.findOne({
-        attributes: ['id', 'title', 'completion_status', 'due_date', 'is_public'],
         where: {
             id: id
         }

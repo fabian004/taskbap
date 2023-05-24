@@ -4,8 +4,8 @@ import Task from '../models/Task';
 import Log from '../models/Log';
 import File from '../models/File';
 import ShareWith from '../models/ShareWith';
-import Comments from '../models/Comment';
-import Tags from '../models/Tag';
+import Comment from '../models/Comment';
+import Tag from '../models/Tag';
 import { Sequelize } from 'sequelize-typescript';
 
 import multer from 'multer';
@@ -56,62 +56,98 @@ router.get('/', async (req, res) => {
   });
 });
 
-router.get('/:id', async (req, res) => {
-  const id = parseInt(req.params.id as string);
-  if(isNaN(id)) {
+router.get('/find', async (req, res) => {
+  const id = parseInt(req.query.id as string);
+  if (isNaN(id)) {
     return res.status(400).json({ message: "Invalid ID format" });
   }
-  const task = await Task.findOne({ 
-    attributes: ['id', 'title', 'completion_status', 'due_date', 'is_public'],
-    where: { 
+
+  const task = await Task.findOne({
+    where: {
       id: id
     }
   });
-  if(!task) {
+
+  if (!task) {
     return res.status(404).json({ message: "Task not found" });
   }
 
-  res.json(task);
+  const files = await File.findAll({
+    where: {
+      task_id: task.id
+    }
+  });
+
+  const tags = await Tag.findAll({
+    where: {
+      task_id: task.id
+    }
+  });
+
+  const comments = await Comment.findAll({
+    where: {
+      task_id: task.id
+    }
+  });
+
+  res.json({
+    task: task,
+    files: files,
+    tags: tags,
+    comments: comments
+  });
 });
 
 
-router.get('/search', async (req: any, res: any) => {
+router.get('/search', async (req, res) => {
   try {
-    const { keyword, completion_status, is_public, due_date, page, limit } = req.query;
+    const { keyword, completion_status, is_public, due_date } = req.query;
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const offset = (page - 1) * limit;
 
-    const pageNum = page ? parseInt(page as string) : 1;
-    const limitNum = limit ? parseInt(limit as string) : 10;
-    const offsetNum = (pageNum - 1) * limitNum;
+    const scoreConditions = [
+      `(CASE WHEN title LIKE '%${keyword}%' THEN 1 ELSE 0 END) * 6`,
+      `(CASE WHEN description LIKE '%${keyword}%' THEN 1 ELSE 0 END) * 4`,
+    ];
+
+    if (completion_status !== undefined) {
+      scoreConditions.push(`IF(completion_status = ${completion_status === 'true'}, 1, 0) * 3`);
+    }
+
+    if (is_public !== undefined) {
+      scoreConditions.push(`IF(is_public = ${is_public === 'true'}, 1, 0) * 2`);
+    }
+
+    if (due_date !== undefined) {
+      scoreConditions.push(`IF(due_date <= '${due_date}', 1, 0)`);
+    }
 
     const tasks = await Task.findAll({
       attributes: {
         include: [
           [Sequelize.literal(`(
-            ((CASE WHEN title LIKE '%${keyword}%' THEN 1 ELSE 0 END) * 6) +
-            ((CASE WHEN description LIKE '%${keyword}%' THEN 1 ELSE 0 END) * 4) +
-            (IF(completion_status = ${completion_status === 'true'}, 1, 0) * 3) +
-            (IF(is_public = ${is_public === 'true'}, 1, 0) * 2) +
+            (${scoreConditions.join(' + ')}) +
             ((SELECT COUNT(*) FROM ShareWith WHERE task_id = Task.id) * 1) +
-            (IF(due_date <= '${due_date}', 1, 0)) +
-            (IF(Files.file_format = 'application/pdf', 1, 0) * 0.5) 
+            ((SELECT COUNT(*) FROM Files WHERE task_id = Task.id AND file_format = 'application/pdf') * 0.5) 
           )`), 'score']
         ]
       },
-      order: [ [Sequelize.literal('score'), 'DESC'] ],
-      limit: limitNum,
-      offset: offsetNum,
+      order: [[Sequelize.literal('score'), 'DESC']],
+      limit,
+      offset,
     });
 
     const totalTasks = await Task.count({
-      where: Sequelize.literal(`
-        title LIKE '%${keyword}%' OR
-        description LIKE '%${keyword}%' OR
-        completion_status = ${completion_status === 'true'} OR
-        is_public = ${is_public === 'true'} OR
-        due_date <= '${due_date}' OR
-        (SELECT COUNT(*) FROM ShareWith WHERE task_id = Task.id) > 0 OR
-        (SELECT file_format FROM Files WHERE task_id = Task.id) = 'application/pdf'
-      `),
+      attributes: {
+        include: [
+          [Sequelize.literal(`(
+            (${scoreConditions.join(' + ')}) +
+            ((SELECT COUNT(*) FROM ShareWith WHERE task_id = Task.id) * 1) +
+            ((SELECT COUNT(*) FROM Files WHERE task_id = Task.id AND file_format = 'application/pdf') * 0.5) 
+          )`), 'score']
+        ]
+      }
     });
 
     res.json({
@@ -125,16 +161,15 @@ router.get('/search', async (req: any, res: any) => {
 });
 
 
-
 router.post('/',
   upload.single('taskFile'),
   async (req: any, res: any) => {
 
-    if (typeof req.body.taskUsers === 'string') {
+    if (typeof req.body.sharedWith === 'string') {
       try {
-        req.body.taskUsers = JSON.parse(req.body.taskUsers);
+        req.body.sharedWith = JSON.parse(req.body.sharedWith);
       } catch (error) {
-        return res.status(400).json({ errors: [{ msg: 'Invalid format for taskUsers' }] });
+        return res.status(400).json({ errors: [{ msg: 'Invalid format for sharedWith' }] });
       }
     }
     [
@@ -144,10 +179,10 @@ router.post('/',
       check('due_date').isDate().withMessage('Due date must be a valid date'),
       check('is_public').isBoolean().withMessage('Is_public must be a boolean'),
       check('created_by').isInt().withMessage('Created_by must be an integer'),
-      check('taskUsers').isArray().withMessage('taskUsers must be an array of user ids'),
+      check('sharedWith').isArray().withMessage('sharedWith must be an array of user ids'),
       check('responsible').optional().isInt().custom((value, { req }) => {
-        if (req.body.taskUsers && !req.body.taskUsers.includes(value)) {
-          throw new Error('Responsible must be in the taskUsers array');
+        if (req.body.sharedWith && !req.body.sharedWith.includes(value)) {
+          throw new Error('Responsible must be in the sharedWith array');
         }
         return true;
       }).withMessage('Responsible must be an integer'),
@@ -160,18 +195,18 @@ router.post('/',
 
     try {
       const task = await Task.create(req.body);
-      const taskUsers = req.body.taskUsers;
+      const sharedWith = req.body.sharedWith;
       
-      for (let userId of taskUsers) {
+      for (let userId of sharedWith) {
         await ShareWith.create({ task_id: task.id, user_id: userId });
       }
 
       if (req.body.comments) {
-        await Comments.create({ task_id: task.id, user_id: req.body.userId, comment: req.body.comments });
+        await Comment.create({ task_id: task.id, user_id: req.body.userId, comment: req.body.comments });
       }
 
       if (req.body.tags) {
-        await Tags.create({ task_id: task.id, user_id: req.body.userId, tag: req.body.tags });
+        await Tag.create({ task_id: task.id, user_id: req.body.userId, tag: req.body.tags });
       }
 
       if (req.file) {
@@ -198,11 +233,11 @@ router.put('/:id',
   upload.single('taskFile'), 
   async (req: any, res: any) => {
 
-    if (typeof req.body.taskUsers === 'string') {
+    if (typeof req.body.sharedWith === 'string') {
       try {
-        req.body.taskUsers = JSON.parse(req.body.taskUsers);
+        req.body.sharedWith = JSON.parse(req.body.sharedWith);
       } catch (error) {
-        return res.status(400).json({ errors: [{ msg: 'Invalid format for taskUsers' }] });
+        return res.status(400).json({ errors: [{ msg: 'Invalid format for sharedWith' }] });
       }
     }
     [
@@ -211,14 +246,16 @@ router.put('/:id',
       check('completion_status').isBoolean().withMessage('Completion status must be a boolean'),
       check('due_date').isDate().withMessage('Due date must be a valid date'),
       check('is_public').isBoolean().withMessage('Is_public must be a boolean'),
-      check('taskUsers').isArray().withMessage('taskUsers must be an array of user ids'),
-      check('responsible').optional().isInt().custom((value, { req }) => {
-        if (req.body.taskUsers && !req.body.taskUsers.includes(value)) {
-          throw new Error('Responsible must be in the taskUsers array');
+      check('sharedWith').optional().isArray().withMessage('sharedWith must be an array of user ids'),
+      check('responsible').optional().notEmpty().withMessage('Responsible is optional'),
+      check('tags').optional().notEmpty().withMessage('Tags are optional'),
+      check('taskFile').optional().custom((value, { req }) => {
+        if (req.file && ['application/pdf', 'image/png', 'image/jpeg'].includes(req.file.mimetype) && req.file.size <= 5000000) {
+          return true;
         }
-        return true;
-      }).withMessage('Responsible must be an integer'),
-    ].forEach(validation => validation.run(req)); 
+        throw new Error('File must be a .pdf, .png, or .jpg and not larger than 5MB');
+      }),
+    ].forEach(validation => validation.run(req));
 
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -251,17 +288,17 @@ router.put('/:id',
       await ShareWith.destroy({ where: { task_id: task.id } });
 
       // Create new ShareWith records
-      const taskUsers = req.body.taskUsers;
-      for (let userId of taskUsers) {
+      const sharedWith = req.body.sharedWith;
+      for (let userId of sharedWith) {
         await ShareWith.create({ task_id: task.id, user_id: userId });
       }
 
       if (req.body.comments) {
-        await Comments.create({ task_id: task.id, user_id: req.body.userId, comment: req.body.comments });
+        await Comment.create({ task_id: task.id, user_id: req.body.userId, comment: req.body.comments });
       }
 
       if (req.body.tags) {
-        await Tags.create({ task_id: task.id, user_id: req.body.userId, tag: req.body.tags });
+        await Tag.create({ task_id: task.id, user_id: req.body.userId, tag: req.body.tags });
       }
 
 
@@ -301,7 +338,7 @@ router.delete('/:id', async (req, res) => {
   const task = await Task.findByPk(req.params.id);
   if (task) {
     await task.destroy();
-    await logAction(task.id, req.body.userId, 'Task deleted number '+task.id,true);
+    await logAction(task.id, 1, 'Task deleted number '+task.id,true);
     res.json({ message: 'Task deleted' });
   } else {
     res.status(404).send('Task not found');
@@ -369,100 +406,152 @@ export default router;
 
 /**
  * @swagger
- * /tasks/{id}:
+ * /tasks/find:
  *   get:
- *     summary: Obtener una tarea específica
- *     description: Obtiene los detalles de una tarea específica utilizando su ID
+ *     summary: Buscar una tarea específica
+ *     description: Busca una tarea basada en los criterios de búsqueda proporcionados.
  *     parameters:
  *       - name: id
- *         in: path
- *         description: ID de la tarea a obtener
+ *         in: query
+ *         description: Id de búsqueda de la tarea
  *         required: true
  *         schema:
- *           type: integer
+ *           type: string
  *     responses:
  *       200:
- *         description: Tarea obtenida exitosamente
+ *         description: Respuesta exitosa
  *         content:
  *           application/json:
  *             schema:
  *               type: object
  *               properties:
- *                 id:
- *                   type: integer
- *                 title:
- *                   type: string
- *                 completion_status:
- *                   type: boolean
- *                 due_date:
- *                   type: string
- *                   format: date
- *                 is_public:
- *                   type: boolean
+ *                 task:
+ *                   type: object
+ *                   properties:
+ *                     id:
+ *                       type: integer
+ *                     title:
+ *                       type: string
+ *                     completion_status:
+ *                       type: boolean
+ *                     due_date:
+ *                       type: string
+ *                       format: date
+ *                     is_public:
+ *                       type: boolean
+ *                 files:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: integer
+ *                       name:
+ *                         type: string
+ *                       task_id:
+ *                         type: integer
+ *                 tags:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: integer
+ *                       name:
+ *                         type: string
+ *                       task_id:
+ *                         type: integer
+ *                 comments:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: integer
+ *                       text:
+ *                         type: string
+ *                       task_id:
+ *                         type: integer
  *       400:
- *         description: Formato inválido del ID de la tarea
+ *         description: ID de formato inválido
  *       404:
  *         description: Tarea no encontrada
  *       500:
  *         description: Error en el servidor
  */
 
-
 /**
  * @swagger
  * /tasks/search:
  *   get:
  *     summary: Buscar tareas
- *     description: Busca tareas basándose en distintos criterios.
+ *     description: Busca tareas basadas en los criterios de búsqueda proporcionados.
  *     parameters:
  *       - name: keyword
  *         in: query
- *         description: Palabra clave para buscar en títulos y descripciones
+ *         description: Palabra clave para buscar en el título y la descripción de las tareas.
  *         required: false
  *         schema:
  *           type: string
  *       - name: completion_status
  *         in: query
- *         description: Estatus de completado de la tarea
+ *         description: Estado de finalización de las tareas (true o false).
  *         required: false
  *         schema:
  *           type: boolean
  *       - name: is_public
  *         in: query
- *         description: Si la tarea es pública o no
+ *         description: Indica si las tareas son públicas (true o false).
  *         required: false
  *         schema:
  *           type: boolean
  *       - name: due_date
  *         in: query
- *         description: Fecha de vencimiento de la tarea
+ *         description: Fecha límite de las tareas (en formato 'yyyy-mm-dd').
  *         required: false
  *         schema:
  *           type: string
  *           format: date
+ *       - name: page
+ *         in: query
+ *         description: Número de página de resultados.
+ *         required: false
+ *         schema:
+ *           type: integer
+ *       - name: limit
+ *         in: query
+ *         description: Número máximo de tareas por página.
+ *         required: false
+ *         schema:
+ *           type: integer
  *     responses:
  *       200:
- *         description: Búsqueda exitosa
+ *         description: Respuesta exitosa
  *         content:
  *           application/json:
  *             schema:
- *               type: array
- *               items:
- *                 type: object
- *                 properties:
- *                   id:
- *                     type: integer
- *                   title:
- *                     type: string
- *                   completion_status:
- *                     type: boolean
- *                   due_date:
- *                     type: string
- *                     format: date
- *                   is_public:
- *                     type: boolean
- *                   score:
- *                     type: integer
+ *               type: object
+ *               properties:
+ *                 tasks:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: integer
+ *                       title:
+ *                         type: string
+ *                       completion_status:
+ *                         type: boolean
+ *                       due_date:
+ *                         type: string
+ *                         format: date
+ *                       is_public:
+ *                         type: boolean
+ *                 totalTasks:
+ *                   type: integer
+ *       404:
+ *         description: Tareas no encontradas
  *       500:
  *         description: Error en el servidor
  */
@@ -514,7 +603,7 @@ export default router;
  *       - name: taskUsers
  *         in: query
  *         description: Array de IDs de usuarios asociados a la tarea
- *         required: true
+ *         required: false
  *         schema:
  *           type: array
  *           items:
@@ -522,13 +611,13 @@ export default router;
  *       - name: responsible
  *         in: query
  *         description: ID del usuario responsable de la tarea
- *         required: true
+ *         required: false
  *         schema:
  *           type: integer
  *       - name: taskFile
  *         in: query
  *         description: Archivo asociado a la tarea
- *         required: true
+ *         required: false
  *         schema:
  *           type: string
  *           format: binary
@@ -545,11 +634,11 @@ export default router;
  *         schema:
  *           type: string
  *     responses:
- *       200:
+ *       '200':
  *         description: Tarea creada exitosamente
- *       400:
- *         description: Formato inválido de taskUsers
- *       500:
+ *       '400':
+ *         description: Formato inválido de taskUsers o parámetros faltantes
+ *       '500':
  *         description: Error en el servidor
  */
 
@@ -618,12 +707,11 @@ export default router;
  *         schema:
  *           type: integer
  *       - name: taskFile
- *         in: query
+ *         in: formData
  *         description: Archivo asociado a la tarea
  *         required: true
  *         schema:
- *           type: string
- *           format: binary
+ *           type: file
  *       - name: comments
  *         in: query
  *         description: Comentarios asociados a la tarea
@@ -636,11 +724,15 @@ export default router;
  *         required: false
  *         schema:
  *           type: string
+ *     consumes:
+ *       - multipart/form-data
  *     responses:
  *       200:
  *         description: Tarea actualizada exitosamente
  *       400:
  *         description: ID de la tarea o formato inválido de taskUsers
+ *       403:
+ *         description: No tiene permiso para editar esta tarea
  *       404:
  *         description: Tarea no encontrada
  *       500:
