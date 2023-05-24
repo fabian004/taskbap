@@ -15,29 +15,29 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const sequelize_typescript_1 = require("sequelize-typescript");
 const Task_1 = __importDefault(require("./Task"));
 const User_1 = __importDefault(require("./User"));
-let File = class File extends sequelize_typescript_1.Model {
+let Comment = class Comment extends sequelize_typescript_1.Model {
 };
 __decorate([
     sequelize_typescript_1.PrimaryKey,
     sequelize_typescript_1.AutoIncrement,
     (0, sequelize_typescript_1.Column)(sequelize_typescript_1.DataType.INTEGER),
     __metadata("design:type", Number)
-], File.prototype, "id", void 0);
-__decorate([
-    (0, sequelize_typescript_1.ForeignKey)(() => User_1.default),
-    (0, sequelize_typescript_1.Column)(sequelize_typescript_1.DataType.STRING),
-    __metadata("design:type", String)
-], File.prototype, "task_id", void 0);
+], Comment.prototype, "id", void 0);
 __decorate([
     (0, sequelize_typescript_1.ForeignKey)(() => Task_1.default),
     (0, sequelize_typescript_1.Column)(sequelize_typescript_1.DataType.STRING),
     __metadata("design:type", String)
-], File.prototype, "user_id", void 0);
+], Comment.prototype, "task_id", void 0);
+__decorate([
+    (0, sequelize_typescript_1.ForeignKey)(() => User_1.default),
+    (0, sequelize_typescript_1.Column)(sequelize_typescript_1.DataType.STRING),
+    __metadata("design:type", String)
+], Comment.prototype, "user_id", void 0);
 __decorate([
     (0, sequelize_typescript_1.Column)(sequelize_typescript_1.DataType.STRING),
     __metadata("design:type", String)
-], File.prototype, "comment", void 0);
-File = __decorate([
+], Comment.prototype, "comment", void 0);
+Comment = __decorate([
     (0, sequelize_typescript_1.Table)({ tableName: 'Comments', timestamps: false })
-], File);
-exports.default = File;
+], Comment);
+exports.default = Comment;
