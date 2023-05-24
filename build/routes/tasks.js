@@ -18,6 +18,8 @@ const Task_1 = __importDefault(require("../models/Task"));
 const Log_1 = __importDefault(require("../models/Log"));
 const File_1 = __importDefault(require("../models/File"));
 const ShareWith_1 = __importDefault(require("../models/ShareWith"));
+const Comment_1 = __importDefault(require("../models/Comment"));
+const Tag_1 = __importDefault(require("../models/Tag"));
 const sequelize_typescript_1 = require("sequelize-typescript");
 const multer_1 = __importDefault(require("multer"));
 const fs = require('fs');
@@ -57,9 +59,28 @@ router.get('/', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
         totalTasks,
     });
 }));
+router.get('/:id', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+        return res.status(400).json({ message: "Invalid ID format" });
+    }
+    const task = yield Task_1.default.findOne({
+        attributes: ['id', 'title', 'completion_status', 'due_date', 'is_public'],
+        where: {
+            id: id
+        }
+    });
+    if (!task) {
+        return res.status(404).json({ message: "Task not found" });
+    }
+    res.json(task);
+}));
 router.get('/search', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const { keyword, completion_status, is_public, due_date } = req.query;
+        const { keyword, completion_status, is_public, due_date, page, limit } = req.query;
+        const pageNum = page ? parseInt(page) : 1;
+        const limitNum = limit ? parseInt(limit) : 10;
+        const offsetNum = (pageNum - 1) * limitNum;
         const tasks = yield Task_1.default.findAll({
             attributes: {
                 include: [
@@ -75,8 +96,24 @@ router.get('/search', (req, res) => __awaiter(void 0, void 0, void 0, function* 
                 ]
             },
             order: [[sequelize_typescript_1.Sequelize.literal('score'), 'DESC']],
+            limit: limitNum,
+            offset: offsetNum,
         });
-        res.json(tasks);
+        const totalTasks = yield Task_1.default.count({
+            where: sequelize_typescript_1.Sequelize.literal(`
+        title LIKE '%${keyword}%' OR
+        description LIKE '%${keyword}%' OR
+        completion_status = ${completion_status === 'true'} OR
+        is_public = ${is_public === 'true'} OR
+        due_date <= '${due_date}' OR
+        (SELECT COUNT(*) FROM ShareWith WHERE task_id = Task.id) > 0 OR
+        (SELECT file_format FROM Files WHERE task_id = Task.id) = 'application/pdf'
+      `),
+        });
+        res.json({
+            tasks,
+            totalTasks,
+        });
     }
     catch (err) {
         console.error(err);
@@ -116,6 +153,12 @@ router.post('/', upload.single('taskFile'), (req, res) => __awaiter(void 0, void
         const taskUsers = req.body.taskUsers;
         for (let userId of taskUsers) {
             yield ShareWith_1.default.create({ task_id: task.id, user_id: userId });
+        }
+        if (req.body.comments) {
+            yield Comment_1.default.create({ task_id: task.id, user_id: req.body.userId, comment: req.body.comments });
+        }
+        if (req.body.tags) {
+            yield Tag_1.default.create({ task_id: task.id, user_id: req.body.userId, tag: req.body.tags });
         }
         if (req.file) {
             const file = {
@@ -186,6 +229,12 @@ router.put('/:id', upload.single('taskFile'), (req, res) => __awaiter(void 0, vo
         const taskUsers = req.body.taskUsers;
         for (let userId of taskUsers) {
             yield ShareWith_1.default.create({ task_id: task.id, user_id: userId });
+        }
+        if (req.body.comments) {
+            yield Comment_1.default.create({ task_id: task.id, user_id: req.body.userId, comment: req.body.comments });
+        }
+        if (req.body.tags) {
+            yield Tag_1.default.create({ task_id: task.id, user_id: req.body.userId, tag: req.body.tags });
         }
         // Delete the previous file associated with the task
         if (req.file) {
@@ -285,6 +334,45 @@ exports.default = router;
  */
 /**
  * @swagger
+ * /tasks/{id}:
+ *   get:
+ *     summary: Obtener una tarea específica
+ *     description: Obtiene los detalles de una tarea específica utilizando su ID
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         description: ID de la tarea a obtener
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Tarea obtenida exitosamente
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 id:
+ *                   type: integer
+ *                 title:
+ *                   type: string
+ *                 completion_status:
+ *                   type: boolean
+ *                 due_date:
+ *                   type: string
+ *                   format: date
+ *                 is_public:
+ *                   type: boolean
+ *       400:
+ *         description: Formato inválido del ID de la tarea
+ *       404:
+ *         description: Tarea no encontrada
+ *       500:
+ *         description: Error en el servidor
+ */
+/**
+ * @swagger
  * /tasks/search:
  *   get:
  *     summary: Buscar tareas
@@ -346,7 +434,7 @@ exports.default = router;
  * /tasks:
  *   post:
  *     summary: Crear una nueva tarea
- *     description: Crea una nueva tarea y la asocia con un archivo y usuarios compartidos
+ *     description: Crea una nueva tarea y la asocia con un archivo, usuarios compartidos, comentarios y etiquetas
  *     parameters:
  *       - name: title
  *         in: query
@@ -406,6 +494,18 @@ exports.default = router;
  *         schema:
  *           type: string
  *           format: binary
+ *       - name: comments
+ *         in: query
+ *         description: Comentarios asociados a la tarea
+ *         required: false
+ *         schema:
+ *           type: string
+ *       - name: tags
+ *         in: query
+ *         description: Etiquetas asociadas a la tarea
+ *         required: false
+ *         schema:
+ *           type: string
  *     responses:
  *       200:
  *         description: Tarea creada exitosamente
@@ -419,7 +519,7 @@ exports.default = router;
  * /tasks/{id}:
  *   put:
  *     summary: Actualizar una tarea
- *     description: Actualiza una tarea y su asociación con un archivo y usuarios compartidos
+ *     description: Actualiza una tarea y su asociación con un archivo, usuarios compartidos, comentarios y etiquetas
  *     parameters:
  *       - name: id
  *         in: path
@@ -485,6 +585,18 @@ exports.default = router;
  *         schema:
  *           type: string
  *           format: binary
+ *       - name: comments
+ *         in: query
+ *         description: Comentarios asociados a la tarea
+ *         required: false
+ *         schema:
+ *           type: string
+ *       - name: tags
+ *         in: query
+ *         description: Etiquetas asociadas a la tarea
+ *         required: false
+ *         schema:
+ *           type: string
  *     responses:
  *       200:
  *         description: Tarea actualizada exitosamente

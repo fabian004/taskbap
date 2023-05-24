@@ -4,6 +4,8 @@ import Task from '../models/Task';
 import Log from '../models/Log';
 import File from '../models/File';
 import ShareWith from '../models/ShareWith';
+import Comments from '../models/Comment';
+import Tags from '../models/Tag';
 import { Sequelize } from 'sequelize-typescript';
 
 import multer from 'multer';
@@ -54,10 +56,32 @@ router.get('/', async (req, res) => {
   });
 });
 
+router.get('/:id', async (req, res) => {
+  const id = parseInt(req.params.id as string);
+  if(isNaN(id)) {
+    return res.status(400).json({ message: "Invalid ID format" });
+  }
+  const task = await Task.findOne({ 
+    attributes: ['id', 'title', 'completion_status', 'due_date', 'is_public'],
+    where: { 
+      id: id
+    }
+  });
+  if(!task) {
+    return res.status(404).json({ message: "Task not found" });
+  }
 
-router.get('/search', async (req, res) => {
+  res.json(task);
+});
+
+
+router.get('/search', async (req: any, res: any) => {
   try {
-    const { keyword, completion_status, is_public, due_date } = req.query;
+    const { keyword, completion_status, is_public, due_date, page, limit } = req.query;
+
+    const pageNum = page ? parseInt(page as string) : 1;
+    const limitNum = limit ? parseInt(limit as string) : 10;
+    const offsetNum = (pageNum - 1) * limitNum;
 
     const tasks = await Task.findAll({
       attributes: {
@@ -74,9 +98,26 @@ router.get('/search', async (req, res) => {
         ]
       },
       order: [ [Sequelize.literal('score'), 'DESC'] ],
+      limit: limitNum,
+      offset: offsetNum,
     });
 
-    res.json(tasks);
+    const totalTasks = await Task.count({
+      where: Sequelize.literal(`
+        title LIKE '%${keyword}%' OR
+        description LIKE '%${keyword}%' OR
+        completion_status = ${completion_status === 'true'} OR
+        is_public = ${is_public === 'true'} OR
+        due_date <= '${due_date}' OR
+        (SELECT COUNT(*) FROM ShareWith WHERE task_id = Task.id) > 0 OR
+        (SELECT file_format FROM Files WHERE task_id = Task.id) = 'application/pdf'
+      `),
+    });
+
+    res.json({
+      tasks,
+      totalTasks,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).send('Server error');
@@ -123,6 +164,14 @@ router.post('/',
       
       for (let userId of taskUsers) {
         await ShareWith.create({ task_id: task.id, user_id: userId });
+      }
+
+      if (req.body.comments) {
+        await Comments.create({ task_id: task.id, user_id: req.body.userId, comment: req.body.comments });
+      }
+
+      if (req.body.tags) {
+        await Tags.create({ task_id: task.id, user_id: req.body.userId, tag: req.body.tags });
       }
 
       if (req.file) {
@@ -206,6 +255,15 @@ router.put('/:id',
       for (let userId of taskUsers) {
         await ShareWith.create({ task_id: task.id, user_id: userId });
       }
+
+      if (req.body.comments) {
+        await Comments.create({ task_id: task.id, user_id: req.body.userId, comment: req.body.comments });
+      }
+
+      if (req.body.tags) {
+        await Tags.create({ task_id: task.id, user_id: req.body.userId, tag: req.body.tags });
+      }
+
 
       // Delete the previous file associated with the task
       if (req.file) {
@@ -309,6 +367,46 @@ export default router;
  *                   type: integer
  */
 
+/**
+ * @swagger
+ * /tasks/{id}:
+ *   get:
+ *     summary: Obtener una tarea específica
+ *     description: Obtiene los detalles de una tarea específica utilizando su ID
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         description: ID de la tarea a obtener
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Tarea obtenida exitosamente
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 id:
+ *                   type: integer
+ *                 title:
+ *                   type: string
+ *                 completion_status:
+ *                   type: boolean
+ *                 due_date:
+ *                   type: string
+ *                   format: date
+ *                 is_public:
+ *                   type: boolean
+ *       400:
+ *         description: Formato inválido del ID de la tarea
+ *       404:
+ *         description: Tarea no encontrada
+ *       500:
+ *         description: Error en el servidor
+ */
+
 
 /**
  * @swagger
@@ -374,7 +472,7 @@ export default router;
  * /tasks:
  *   post:
  *     summary: Crear una nueva tarea
- *     description: Crea una nueva tarea y la asocia con un archivo y usuarios compartidos
+ *     description: Crea una nueva tarea y la asocia con un archivo, usuarios compartidos, comentarios y etiquetas
  *     parameters:
  *       - name: title
  *         in: query
@@ -434,6 +532,18 @@ export default router;
  *         schema:
  *           type: string
  *           format: binary
+ *       - name: comments
+ *         in: query
+ *         description: Comentarios asociados a la tarea
+ *         required: false
+ *         schema:
+ *           type: string
+ *       - name: tags
+ *         in: query
+ *         description: Etiquetas asociadas a la tarea
+ *         required: false
+ *         schema:
+ *           type: string
  *     responses:
  *       200:
  *         description: Tarea creada exitosamente
@@ -448,7 +558,7 @@ export default router;
  * /tasks/{id}:
  *   put:
  *     summary: Actualizar una tarea
- *     description: Actualiza una tarea y su asociación con un archivo y usuarios compartidos
+ *     description: Actualiza una tarea y su asociación con un archivo, usuarios compartidos, comentarios y etiquetas
  *     parameters:
  *       - name: id
  *         in: path
@@ -514,6 +624,18 @@ export default router;
  *         schema:
  *           type: string
  *           format: binary
+ *       - name: comments
+ *         in: query
+ *         description: Comentarios asociados a la tarea
+ *         required: false
+ *         schema:
+ *           type: string
+ *       - name: tags
+ *         in: query
+ *         description: Etiquetas asociadas a la tarea
+ *         required: false
+ *         schema:
+ *           type: string
  *     responses:
  *       200:
  *         description: Tarea actualizada exitosamente
@@ -524,7 +646,6 @@ export default router;
  *       500:
  *         description: Error en el servidor
  */
-
 
 /**
  * @swagger

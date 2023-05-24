@@ -1,7 +1,8 @@
 import { Table, Column, Model, DataType, PrimaryKey, AutoIncrement, ForeignKey } from 'sequelize-typescript';
+import Task from './Task';
 import User from './User';
 
-@Table({ tableName: 'Files', timestamps: false })
+@Table({ tableName: 'Tags', timestamps: false })
 export default class File extends Model {
   
   @PrimaryKey
@@ -13,16 +14,11 @@ export default class File extends Model {
   @Column(DataType.STRING)
   public task_id!: string;
 
+  @ForeignKey(() => Task)
   @Column(DataType.STRING)
-  public file_name!: string;
+  public user_id!: string;
 
   @Column(DataType.STRING)
-  public file_size!: string;
-
-  @Column(DataType.STRING)
-  public file_format!: string;
-
-  @Column(DataType.STRING)
-  public file_path!: string;
+  public tag!: string;
 
 }

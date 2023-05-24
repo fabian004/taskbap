@@ -13,6 +13,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const sequelize_typescript_1 = require("sequelize-typescript");
+const Task_1 = __importDefault(require("./Task"));
 const User_1 = __importDefault(require("./User"));
 let File = class File extends sequelize_typescript_1.Model {
 };
@@ -28,22 +29,15 @@ __decorate([
     __metadata("design:type", String)
 ], File.prototype, "task_id", void 0);
 __decorate([
+    (0, sequelize_typescript_1.ForeignKey)(() => Task_1.default),
     (0, sequelize_typescript_1.Column)(sequelize_typescript_1.DataType.STRING),
     __metadata("design:type", String)
-], File.prototype, "file_name", void 0);
+], File.prototype, "user_id", void 0);
 __decorate([
     (0, sequelize_typescript_1.Column)(sequelize_typescript_1.DataType.STRING),
     __metadata("design:type", String)
-], File.prototype, "file_size", void 0);
-__decorate([
-    (0, sequelize_typescript_1.Column)(sequelize_typescript_1.DataType.STRING),
-    __metadata("design:type", String)
-], File.prototype, "file_format", void 0);
-__decorate([
-    (0, sequelize_typescript_1.Column)(sequelize_typescript_1.DataType.STRING),
-    __metadata("design:type", String)
-], File.prototype, "file_path", void 0);
+], File.prototype, "tag", void 0);
 File = __decorate([
-    (0, sequelize_typescript_1.Table)({ tableName: 'Files', timestamps: false })
+    (0, sequelize_typescript_1.Table)({ tableName: 'Tags', timestamps: false })
 ], File);
 exports.default = File;
